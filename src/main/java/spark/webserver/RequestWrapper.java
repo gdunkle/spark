@@ -33,6 +33,10 @@ final class RequestWrapper extends Request {
         this.delegate = delegate;
     }
 
+    Request getDelegate() {
+        return delegate;
+    }
+
     @Override
     public String requestMethod() {
         return delegate.requestMethod();
@@ -57,7 +61,7 @@ final class RequestWrapper extends Request {
     public String servletPath() {
         return delegate.servletPath();
     }
-    
+
     @Override
     public String contextPath() {
         return delegate.contextPath();
@@ -89,10 +93,15 @@ final class RequestWrapper extends Request {
     }
 
     @Override
+    public Map<String, String> params() {
+        return delegate.params();
+    }
+
+    @Override
     public String params(String param) {
         return delegate.params(param);
     }
-    
+
     @Override
     public String[] splat() {
         return delegate.splat();
@@ -154,6 +163,16 @@ final class RequestWrapper extends Request {
     }
 
     @Override
+    public String uri() {
+        return delegate.uri();
+    }
+
+    @Override
+    public String protocol() {
+        return delegate.protocol();
+    }
+
+    @Override
     public void attribute(String attribute, Object value) {
         delegate.attribute(attribute, value);
     }
@@ -172,6 +191,7 @@ final class RequestWrapper extends Request {
     public Session session() {
         return delegate.session();
     }
+
     @Override
     public Session session(boolean create) {
         return delegate.session(create);

@@ -1,10 +1,10 @@
 /*
- * Copyright 2011- Per Wendel
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *  
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -16,7 +16,6 @@
  */
 package spark.utils;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -66,36 +65,16 @@ import java.io.Writer;
  * @author Niall Pemberton
  * @author Sandy McArthur
  * @version $Id: IOUtils.java 481854 2006-12-03 18:30:07Z scolebourne $
+ *
+ * Code copied from apache commons io source. Changes made (mostly removal of methods) by Per Wendel.
  */
 public final class IOUtils {
-    // NOTE: This class is focussed on InputStream, OutputStream, Reader and
-    // Writer. Each method should take at least one of these as a parameter,
-    // or return one of them.
 
-    /**
-     * The Unix directory separator character.
-     */
-    public static final char DIR_SEPARATOR_UNIX = '/';
-    /**
-     * The Windows directory separator character.
-     */
-    public static final char DIR_SEPARATOR_WINDOWS = '\\';
-    /**
-     * The system directory separator character.
-     */
-    public static final char DIR_SEPARATOR = File.separatorChar;
-    /**
-     * The Unix line separator string.
-     */
-    public static final String LINE_SEPARATOR_UNIX = "\n";
-    /**
-     * The Windows line separator string.
-     */
-    public static final String LINE_SEPARATOR_WINDOWS = "\r\n";
     /**
      * The system line separator string.
      */
     public static final String LINE_SEPARATOR;
+
     static {
         // avoid security issues
         StringWriter buf = new StringWriter(4); // NOSONAR
@@ -108,11 +87,13 @@ public final class IOUtils {
      * The default buffer size to use.
      */
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 4;
-    
-    private IOUtils() {}
-    
+
+    private IOUtils() {
+    }
+
     // read toString
     //-----------------------------------------------------------------------
+
     /**
      * Get the contents of an <code>InputStream</code> as a String
      * using the default character encoding of the platform.
@@ -120,10 +101,10 @@ public final class IOUtils {
      * This method buffers the input internally, so there is no need to use a
      * <code>BufferedInputStream</code>.
      *
-     * @param input  the <code>InputStream</code> to read from
+     * @param input the <code>InputStream</code> to read from
      * @return the requested String
      * @throws NullPointerException if the input is null
-     * @throws IOException if an I/O error occurs
+     * @throws IOException          if an I/O error occurs
      */
     public static String toString(InputStream input) throws IOException {
         StringWriter sw = new StringWriter();
@@ -141,9 +122,9 @@ public final class IOUtils {
      * This method uses {@link InputStreamReader}.
      *
      * @param input  the <code>InputStream</code> to read from
-     * @param output  the <code>Writer</code> to write to
+     * @param output the <code>Writer</code> to write to
      * @throws NullPointerException if the input or output is null
-     * @throws IOException if an I/O error occurs
+     * @throws IOException          if an I/O error occurs
      * @since Commons IO 1.1
      */
     public static void copy(InputStream input, Writer output)
@@ -154,6 +135,7 @@ public final class IOUtils {
 
     // copy from Reader
     //-----------------------------------------------------------------------
+
     /**
      * Copy chars from a <code>Reader</code> to a <code>Writer</code>.
      * <p>
@@ -166,11 +148,11 @@ public final class IOUtils {
      * use the <code>copyLarge(Reader, Writer)</code> method.
      *
      * @param input  the <code>Reader</code> to read from
-     * @param output  the <code>Writer</code> to write to
+     * @param output the <code>Writer</code> to write to
      * @return the number of characters copied
      * @throws NullPointerException if the input or output is null
-     * @throws IOException if an I/O error occurs
-     * @throws ArithmeticException if the character count is too large
+     * @throws IOException          if an I/O error occurs
+     * @throws ArithmeticException  if the character count is too large
      * @since Commons IO 1.1
      */
     public static int copy(Reader input, Writer output) throws IOException {
@@ -188,10 +170,10 @@ public final class IOUtils {
      * <code>BufferedReader</code>.
      *
      * @param input  the <code>Reader</code> to read from
-     * @param output  the <code>Writer</code> to write to
+     * @param output the <code>Writer</code> to write to
      * @return the number of characters copied
      * @throws NullPointerException if the input or output is null
-     * @throws IOException if an I/O error occurs
+     * @throws IOException          if an I/O error occurs
      * @since Commons IO 1.3
      */
     public static long copyLarge(Reader input, Writer output) throws IOException {

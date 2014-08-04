@@ -1,34 +1,39 @@
 package spark;
 
-import static spark.Spark.after;
-import static spark.Spark.before;
-import static spark.Spark.externalStaticFileLocation;
-import static spark.Spark.get;
-import static spark.Spark.patch;
-import static spark.Spark.post;
-import static spark.Spark.staticFileLocation;
-
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-
-import junit.framework.Assert;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import junit.framework.Assert;
+import spark.examples.exception.BaseException;
+import spark.examples.exception.NotFoundException;
+import spark.examples.exception.SubclassOfBaseException;
 import spark.util.SparkTestUtil;
 import spark.util.SparkTestUtil.UrlResponse;
 
+import static spark.Spark.after;
+import static spark.Spark.before;
+import static spark.Spark.exception;
+import static spark.Spark.externalStaticFileLocation;
+import static spark.Spark.get;
+import static spark.Spark.halt;
+import static spark.Spark.patch;
+import static spark.Spark.post;
+import static spark.Spark.staticFileLocation;
+
 public class GenericIntegrationTest {
+
+    private static final String NOT_FOUND_BRO = "Not found bro";
 
     static SparkTestUtil testUtil;
     static File tmpExternalFile;
 
     @AfterClass
     public static void tearDown() {
-        Spark.clearRoutes();
         Spark.stop();
         if (tmpExternalFile != null) {
             tmpExternalFile.delete();
@@ -49,106 +54,89 @@ public class GenericIntegrationTest {
         staticFileLocation("/public");
         externalStaticFileLocation(System.getProperty("java.io.tmpdir"));
 
-        before(new Filter("/protected/*") {
+        before("/secretcontent/*", (request, response) -> {
+            halt(401, "Go Away!");
+        });
 
-            @Override
-            public void handle(Request request, Response response) {
-                halt(401, "Go Away!");
+        before("/protected/*", "application/xml", (request, response) -> {
+            halt(401, "Go Away!");
+        });
+
+        before("/protected/*", "application/json", (request, response) -> {
+            halt(401, "{\"message\": \"Go Away!\"}");
+        });
+
+        get("/hi", "application/json", (request, response) -> {
+            return "{\"message\": \"Hello World\"}";
+        });
+
+        get("/hi", (request, response) -> {
+            return "Hello World!";
+        });
+
+        get("/param/:param", (request, response) -> {
+            return "echo: " + request.params(":param");
+        });
+
+        get("/paramandwild/:param/stuff/*", (request, response) -> {
+            return "paramandwild: " + request.params(":param") + request.splat()[0];
+        });
+
+        get("/paramwithmaj/:paramWithMaj", (request, response) -> {
+            return "echo: " + request.params(":paramWithMaj");
+        });
+
+        get("/templateView", (request, response) -> {
+            return new ModelAndView("Hello", "my view");
+        }, new TemplateEngine() {
+            public String render(ModelAndView modelAndView) {
+                return modelAndView.getModel() + " from " + modelAndView.getViewName();
             }
         });
 
-        before(new Filter("/protected/*", "application/json") {
-
-            @Override
-            public void handle(Request request, Response response) {
-                halt(401, "{\"message\": \"Go Away!\"}");
-            }
-        });
-        
-        get(new Route("/hi", "application/json") {
-
-			@Override
-			public Object handle(Request request, Response response) {
-				return "{\"message\": \"Hello World\"}";
-			}
-        	
-        });
-        
-        get(new Route("/hi") {
-
-            @Override
-            public Object handle(Request request, Response response) {
-                return "Hello World!";
-            }
+        get("/", (request, response) -> {
+            return "Hello Root!";
         });
 
-        get(new Route("/param/:param") {
-
-            @Override
-            public Object handle(Request request, Response response) {
-                return "echo: " + request.params(":param");
-            }
-        });
-        
-        get(new Route("/paramandwild/:param/stuff/*") {
-            @Override
-            public Object handle(Request request, Response response) {
-                return "paramandwild: " + request.params(":param") + request.splat()[0];
-            }
+        post("/poster", (request, response) -> {
+            String body = request.body();
+            response.status(201); // created
+            return "Body was: " + body;
         });
 
-        get(new Route("/paramwithmaj/:paramWithMaj") {
-
-            @Override
-            public Object handle(Request request, Response response) {
-                return "echo: " + request.params(":paramWithMaj");
-            }
+        patch("/patcher", (request, response) -> {
+            String body = request.body();
+            response.status(200);
+            return "Body was: " + body;
         });
 
-        get(new TemplateViewRoute("/templateView") {
-			
-			@Override
-			public String render(ModelAndView modelAndView) {
-				return modelAndView.getModel()+" from "+modelAndView.getViewName();
-			}
-			
-			@Override
-			public ModelAndView handle(Request request, Response response) {
-				return new ModelAndView("Hello", "my view");
-			}
-		});
-        
-        get(new Route("/") {
-
-            @Override
-            public Object handle(Request request, Response response) {
-                return "Hello Root!";
-            }
+        after("/hi", (request, response) -> {
+            response.header("after", "foobar");
         });
 
-        post(new Route("/poster") {
-            @Override
-            public Object handle(Request request, Response response) {
-                String body = request.body();
-                response.status(201); // created
-                return "Body was: " + body;
-            }
+        get("/throwexception", (request, response) -> {
+            throw new UnsupportedOperationException();
         });
 
-        patch(new Route("/patcher") {
-            @Override
-            public Object handle(Request request, Response response) {
-                String body = request.body();
-                response.status(200);
-                return "Body was: " + body;
-            }
+        get("/throwsubclassofbaseexception", (request, response) -> {
+            throw new SubclassOfBaseException();
         });
 
-        after(new Filter("/hi") {
-            @Override
-            public void handle(Request request, Response response) {
-                response.header("after", "foobar");
-            }
+        get("/thrownotfound", (request, response) -> {
+            throw new NotFoundException();
+        });
+
+        exception(UnsupportedOperationException.class, (exception, request, response) -> {
+            response.body("Exception handled");
+        });
+
+        exception(BaseException.class, (exception, request, response) -> {
+            response.body("Exception handled");
+        });
+
+        exception(NotFoundException.class, (exception, request, response) -> {
+            response.status(404);
+            response.body(NOT_FOUND_BRO);
         });
 
         try {
@@ -167,21 +155,21 @@ public class GenericIntegrationTest {
             throw new RuntimeException(e);
         }
     }
-    
+
     @Test
     public void routes_should_be_accept_type_aware() throws Exception {
-    	 UrlResponse response = testUtil.doMethod("GET", "/hi", null, "application/json");
-    	 Assert.assertEquals(200, response.status);
-         Assert.assertEquals("{\"message\": \"Hello World\"}", response.body);
+        UrlResponse response = testUtil.doMethod("GET", "/hi", null, "application/json");
+        Assert.assertEquals(200, response.status);
+        Assert.assertEquals("{\"message\": \"Hello World\"}", response.body);
     }
-    
+
     @Test
     public void template_view_should_be_rendered_with_given_model_view_object() throws Exception {
-    	 UrlResponse response = testUtil.doMethod("GET", "/templateView", null);
-    	 Assert.assertEquals(200, response.status);
-    	 Assert.assertEquals("Hello from my view", response.body);
+        UrlResponse response = testUtil.doMethod("GET", "/templateView", null);
+        Assert.assertEquals(200, response.status);
+        Assert.assertEquals("Hello from my view", response.body);
     }
-    
+
     @Test
     public void testGetHi() {
         try {
@@ -235,7 +223,7 @@ public class GenericIntegrationTest {
             throw new RuntimeException(e);
         }
     }
-    
+
     @Test
     public void testEchoParam1() {
         try {
@@ -286,11 +274,8 @@ public class GenericIntegrationTest {
     }
 
     private static void registerEchoRoute(final String routePart) {
-        get(new Route("/tworoutes/" + routePart + "/:param") {
-            @Override
-            public Object handle(Request request, Response response) {
-                return routePart + " route: " + request.params(":param");
-            }
+        get("/tworoutes/" + routePart + "/:param", (request, response) -> {
+            return routePart + " route: " + request.params(":param");
         });
     }
 
@@ -300,7 +285,7 @@ public class GenericIntegrationTest {
         Assert.assertEquals(200, response.status);
         Assert.assertEquals(routePart + " route: " + expected, response.body);
     }
-    
+
     @Test
     public void testEchoParamWithMaj() {
         try {
@@ -315,7 +300,7 @@ public class GenericIntegrationTest {
     @Test
     public void testUnauthorized() throws Exception {
         try {
-            UrlResponse response = testUtil.doMethod("GET", "/protected/resource", null);
+            UrlResponse response = testUtil.doMethod("GET", "/secretcontent/whateva", null);
             Assert.assertTrue(response.status == 401);
         } catch (Throwable e) {
             throw new RuntimeException(e);
@@ -370,4 +355,23 @@ public class GenericIntegrationTest {
         Assert.assertEquals("Content of external file", response.body);
     }
 
+    @Test
+    public void testExceptionMapper() throws Exception {
+        UrlResponse response = testUtil.doMethod("GET", "/throwexception", null);
+        Assert.assertEquals("Exception handled", response.body);
+    }
+
+    @Test
+    public void testInheritanceExceptionMapper() throws Exception {
+        UrlResponse response = testUtil.doMethod("GET", "/throwsubclassofbaseexception", null);
+        Assert.assertEquals("Exception handled", response.body);
+    }
+
+    @Test
+    public void testNotFoundExceptionMapper() throws Exception {
+        //        thrownotfound
+        UrlResponse response = testUtil.doMethod("GET", "/thrownotfound", null);
+        Assert.assertEquals(NOT_FOUND_BRO, response.body);
+        Assert.assertEquals(404, response.status);
+    }
 }
