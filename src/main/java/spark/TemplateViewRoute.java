@@ -25,7 +25,8 @@ package spark;
  *
  * @author alex
  */
-public interface TemplateViewRoute {
+@FunctionalInterface
+public interface TemplateViewRoute extends Route{
 
     /**
      * Invoked when a request is made on this route's corresponding path e.g. '/hello'
