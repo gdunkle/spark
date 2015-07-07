@@ -17,6 +17,7 @@
 package spark.webserver;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.List;
 
 import javax.servlet.Filter;
@@ -40,6 +41,8 @@ import spark.exception.ExceptionMapper;
 import spark.route.HttpMethod;
 import spark.route.RouteMatch;
 import spark.route.SimpleRouteMatcher;
+import spark.utils.GzipUtils;
+import spark.webserver.serialization.SerializerChain;
 
 /**
  * Filter for matching of filters and routes.
@@ -49,8 +52,10 @@ import spark.route.SimpleRouteMatcher;
 public class MatcherFilter implements Filter {
 
     private static final String ACCEPT_TYPE_REQUEST_MIME_HEADER = "Accept";
+    private static final String HTTP_METHOD_OVERRIDE_HEADER = "X-HTTP-Method-Override";
 
     private SimpleRouteMatcher routeMatcher;
+    private SerializerChain serializerChain;
     private boolean isServletContext;
     private boolean hasOtherHandlers;
 
@@ -70,6 +75,7 @@ public class MatcherFilter implements Filter {
         this.routeMatcher = routeMatcher;
         this.isServletContext = isServletContext;
         this.hasOtherHandlers = hasOtherHandlers;
+        this.serializerChain = new SerializerChain();
     }
 
     public void init(FilterConfig filterConfig) {
@@ -81,14 +87,20 @@ public class MatcherFilter implements Filter {
         HttpServletRequest httpRequest = (HttpServletRequest) servletRequest; // NOSONAR
         HttpServletResponse httpResponse = (HttpServletResponse) servletResponse;
 
-        String httpMethodStr = httpRequest.getMethod().toLowerCase(); // NOSONAR
-        String uri = httpRequest.getRequestURI(); // NOSONAR
+        String method = httpRequest.getHeader(HTTP_METHOD_OVERRIDE_HEADER);
+        if (method == null) {
+            method = httpRequest.getMethod();
+        }
+        String httpMethodStr = method.toLowerCase(); // NOSONAR
+        String uri = httpRequest.getPathInfo(); // NOSONAR
         String acceptType = httpRequest.getHeader(ACCEPT_TYPE_REQUEST_MIME_HEADER);
 
-        String bodyContent = null;
+        Object bodyContent = null;
 
-        RequestWrapper req = new RequestWrapper();
-        ResponseWrapper res = new ResponseWrapper();
+        RequestWrapper requestWrapper = new RequestWrapper();
+        ResponseWrapper responseWrapper = new ResponseWrapper();
+
+        Response response = RequestResponseFactory.create(httpResponse);
 
         LOG.debug("httpMethod:" + httpMethodStr + ", uri: " + uri);
         try {
@@ -99,14 +111,13 @@ public class MatcherFilter implements Filter {
                 Object filterTarget = filterMatch.getTarget();
                 if (filterTarget instanceof FilterImpl) {
                     Request request = RequestResponseFactory.create(filterMatch, httpRequest);
-                    Response response = RequestResponseFactory.create(httpResponse);
 
                     FilterImpl filter = (FilterImpl) filterTarget;
 
-                    req.setDelegate(request);
-                    res.setDelegate(response);
+                    requestWrapper.setDelegate(request);
+                    responseWrapper.setDelegate(response);
 
-                    filter.handle(req, res);
+                    filter.handle(requestWrapper, responseWrapper);
 
                     String bodyAfterFilter = Access.getBody(response);
                     if (bodyAfterFilter != null) {
@@ -132,16 +143,20 @@ public class MatcherFilter implements Filter {
 
             if (target != null) {
                 try {
-                    String result = null;
+                    Object result = null;
                     if (target instanceof RouteImpl) {
                         RouteImpl route = ((RouteImpl) target);
-                        Request request = RequestResponseFactory.create(match, httpRequest);
-                        Response response = RequestResponseFactory.create(httpResponse);
 
-                        req.setDelegate(request);
-                        res.setDelegate(response);
+                        if (requestWrapper.getDelegate() == null) {
+                            Request request = RequestResponseFactory.create(match, httpRequest);
+                            requestWrapper.setDelegate(request);
+                        } else {
+                            requestWrapper.changeMatch(match);
+                        }
 
-                        Object element = route.handle(req, res);
+                        responseWrapper.setDelegate(response);
+
+                        Object element = route.handle(requestWrapper, responseWrapper);
 
                         result = route.render(element);
                         // result = element.toString(); // TODO: Remove later when render fixed
@@ -160,14 +175,18 @@ public class MatcherFilter implements Filter {
             for (RouteMatch filterMatch : matchSet) {
                 Object filterTarget = filterMatch.getTarget();
                 if (filterTarget instanceof FilterImpl) {
-                    Request request = RequestResponseFactory.create(filterMatch, httpRequest);
-                    Response response = RequestResponseFactory.create(httpResponse);
 
-                    req.setDelegate(request);
-                    res.setDelegate(response);
+                    if (requestWrapper.getDelegate() == null) {
+                        Request request = RequestResponseFactory.create(filterMatch, httpRequest);
+                        requestWrapper.setDelegate(request);
+                    } else {
+                        requestWrapper.changeMatch(filterMatch);
+                    }
+
+                    responseWrapper.setDelegate(response);
 
                     FilterImpl filter = (FilterImpl) filterTarget;
-                    filter.handle(req, res);
+                    filter.handle(requestWrapper, responseWrapper);
 
                     String bodyAfterFilter = Access.getBody(response);
                     if (bodyAfterFilter != null) {
@@ -188,8 +207,8 @@ public class MatcherFilter implements Filter {
         } catch (Exception e) {
             ExceptionHandlerImpl handler = ExceptionMapper.getInstance().getHandler(e);
             if (handler != null) {
-                handler.handle(e, req, res);
-                String bodyAfterFilter = Access.getBody(res.getDelegate());
+                handler.handle(e, requestWrapper, responseWrapper);
+                String bodyAfterFilter = Access.getBody(responseWrapper.getDelegate());
                 if (bodyAfterFilter != null) {
                     bodyContent = bodyAfterFilter;
                 }
@@ -201,7 +220,7 @@ public class MatcherFilter implements Filter {
         }
 
         // If redirected and content is null set to empty string to not throw NotConsumedException
-        if (bodyContent == null && res.isRedirected()) {
+        if (bodyContent == null && responseWrapper.isRedirected()) {
             bodyContent = "";
         }
 
@@ -212,8 +231,9 @@ public class MatcherFilter implements Filter {
         }
 
         if (!consumed && !isServletContext) {
+            LOG.info("The requested route [" + uri + "] has not been mapped in Spark");
             httpResponse.setStatus(HttpServletResponse.SC_NOT_FOUND);
-            bodyContent = String.format(NOT_FOUND, uri);
+            bodyContent = String.format(NOT_FOUND);
             consumed = true;
         }
 
@@ -223,11 +243,14 @@ public class MatcherFilter implements Filter {
                 if (httpResponse.getContentType() == null) {
                     httpResponse.setContentType("text/html; charset=utf-8");
                 }
-                byte[] bytes=bodyContent.getBytes("utf-8");
-                if(httpResponse.getHeader("Content-Length")==null){
-                    httpResponse.setHeader("Content-Length", new Integer(bytes.length).toString());
-                }
-                httpResponse.getOutputStream().write(bytes);
+                   // Check if gzip is wanted/accepted and in that case handle that
+                OutputStream outputStream = GzipUtils.checkAndWrap(httpRequest, httpResponse);
+
+                // serialize the body to output stream
+                serializerChain.process(outputStream, bodyContent);
+
+                outputStream.flush();//needed for GZIP stream. NOt sure where the HTTP response actually gets cleaned up
+
             }
         } else if (chain != null) {
             chain.doFilter(httpRequest, httpResponse);
@@ -238,6 +261,6 @@ public class MatcherFilter implements Filter {
         // TODO Auto-generated method stub
     }
 
-    private static final String NOT_FOUND = "<html><body><h2>404 Not found</h2>The requested route [%s] has not been mapped in Spark</body></html>";
+    private static final String NOT_FOUND = "<html><body><h2>404 Not found</h2></body></html>";
     private static final String INTERNAL_ERROR = "<html><body><h2>500 Internal Error</h2></body></html>";
 }

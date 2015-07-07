@@ -22,6 +22,7 @@ import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jetty.server.Connector;
@@ -36,6 +37,9 @@ import org.eclipse.jetty.server.handler.ContextHandler.ApproveAliases;
 import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Spark server implementation
@@ -46,9 +50,12 @@ public class SparkServer {
 
     private static final int SPARK_DEFAULT_PORT = 4567;
     private static final String NAME = "Spark";
+
     private Handler handler;
     private Server server;
     
+    private final Logger logger = LoggerFactory.getLogger(this.getClass());
+
     public SparkServer(Handler handler) {
         this.handler = handler;
         System.setProperty("org.mortbay.log.class", "spark.JettyLogger");
@@ -70,24 +77,28 @@ public class SparkServer {
     public void ignite(String host, int port, String keystoreFile,
                        String keystorePassword, String truststoreFile,
                        String truststorePassword, String staticFilesFolder,
-                       String externalFilesFolder,SparkSessionIdManager sessionIdManager,SparkSessionManager sessionManager) {
+                       String externalFilesFolder,SparkSessionIdManager sessionIdManager,SparkSessionManager sessionManager,  CountDownLatch latch,
+                       int maxThreads,
+                       int minThreads,
+                       int threadIdleTimeoutMillis) {
 
         if (port == 0) {
             try (ServerSocket s = new ServerSocket(0)) {
                 port = s.getLocalPort();
             } catch (IOException e) {
-                System.err.println(
-                        "Could not get first available port (port set to 0), using default: " + SPARK_DEFAULT_PORT);
+                logger.error("Could not get first available port (port set to 0), using default: {}", SPARK_DEFAULT_PORT);
                 port = SPARK_DEFAULT_PORT;
             }
         }
 
+        server = createServer(maxThreads, minThreads, threadIdleTimeoutMillis);
+
         ServerConnector connector;
 
         if (keystoreFile == null) {
-            connector = createSocketConnector();
+            connector = createSocketConnector(server);
         } else {
-            connector = createSecureSocketConnector(keystoreFile,
+            connector = createSecureSocketConnector(server, keystoreFile,
                                                     keystorePassword, truststoreFile, truststorePassword);
         }
 
@@ -99,14 +110,10 @@ public class SparkServer {
 
         server = connector.getServer();
         server.setConnectors(new Connector[] {connector});
-        ContextHandler context=new ContextHandler("");
-        context.setResourceBase(".");
-        context.setClassLoader(Thread.currentThread().getContextClassLoader());
-        server.setHandler(context);
-        context.setAliasChecks(Arrays.asList(new ApproveAliases()));
+
         // Handle static file routes
         if (staticFilesFolder == null && externalFilesFolder == null) {
-        	context.setHandler(handler);
+            server.setHandler(handler);
         } else {
             List<Handler> handlersInList = new ArrayList<Handler>();
             handlersInList.add(handler);
@@ -119,39 +126,38 @@ public class SparkServer {
 
             HandlerList handlers = new HandlerList();
             handlers.setHandlers(handlersInList.toArray(new Handler[handlersInList.size()]));
-            context.setHandler(handlers);
-        }
-        if(sessionManager!=null){
-            ((SessionHandler)handler).setSessionManager(sessionManager.getSessionManager(server));
+            server.setHandler(handlers);
         }
         try {
-            System.out.println("== " + NAME + " has ignited ..."); // NOSONAR
-            System.out.println(">> Listening on " + host + ":" + port); // NOSONAR
+            logger.info("== {} has ignited ...", NAME);
+            logger.info(">> Listening on {}:{}", host, port);
 
             server.start();
+             latch.countDown();
             if (sessionIdManager != null) {
                 SessionIdManager wrappedSessionIdManager = sessionIdManager.getSessionIdManager(server);
                  server.setSessionIdManager(wrappedSessionIdManager);
                  sessionManager.getSessionManager(server).setSessionIdManager(wrappedSessionIdManager);
              }
+           
             server.join();
         } catch (Exception e) {
-            e.printStackTrace(); // NOSONAR
+            logger.error("ignite failed", e);
             System.exit(100); // NOSONAR
         }
     }
 
     public void stop() {
-        System.out.print(">>> " + NAME + " shutting down..."); // NOSONAR
+        logger.info(">>> {} shutting down ...", NAME);
         try {
             if (server != null) {
                 server.stop();
             }
         } catch (Exception e) {
-            e.printStackTrace(); // NOSONAR
+            logger.error("stop failed", e);
             System.exit(100); // NOSONAR
         }
-        System.out.println("done"); // NOSONAR
+        logger.info("done");
     }
 
     /**
@@ -164,8 +170,10 @@ public class SparkServer {
      * @param truststorePassword the trust store password
      * @return a secure socket connector
      */
-    private static ServerConnector createSecureSocketConnector(String keystoreFile,
-                                                               String keystorePassword, String truststoreFile,
+    private static ServerConnector createSecureSocketConnector(Server server,
+                                                               String keystoreFile,
+                                                               String keystorePassword,
+                                                               String truststoreFile,
                                                                String truststorePassword) {
 
         SslContextFactory sslContextFactory = new SslContextFactory(
@@ -180,16 +188,31 @@ public class SparkServer {
         if (truststorePassword != null) {
             sslContextFactory.setTrustStorePassword(truststorePassword);
         }
-        return new ServerConnector(new Server(), sslContextFactory);
+        return new ServerConnector(server, sslContextFactory);
     }
 
     /**
      * Creates an ordinary, non-secured Jetty server connector.
      *
+     * @param server Jetty server
      * @return - a server connector
      */
-    private static ServerConnector createSocketConnector() {
-        return new ServerConnector(new Server());
+    private static ServerConnector createSocketConnector(Server server) {
+        return new ServerConnector(server);
+    }
+
+    private static Server createServer(int maxThreads, int minThreads, int threadTimeoutMillis) {
+        Server server;
+
+        if (maxThreads > 0) {
+            int max = (maxThreads > 0) ? maxThreads : 200;
+            int min = (minThreads > 0) ? minThreads : 8;
+            int idleTimeout = (threadTimeoutMillis > 0) ? threadTimeoutMillis : 60000;
+            server = new Server(new QueuedThreadPool(max, min, idleTimeout));
+        } else {
+            server = new Server();
+        }
+        return server;
     }
 
     /**
