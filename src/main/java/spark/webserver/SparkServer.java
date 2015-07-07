@@ -164,6 +164,7 @@ public class SparkServer {
      * Creates a secure jetty socket connector. Keystore required, truststore
      * optional. If truststore not specifed keystore will be reused.
      *
+     * @param server             Jetty server
      * @param keystoreFile       The keystore file location as string
      * @param keystorePassword   the password for the keystore
      * @param truststoreFile     the truststore file location as string, leave null to reuse keystore
@@ -234,14 +235,14 @@ public class SparkServer {
     private static void setExternalStaticFileLocationIfPresent(String externalFilesRoute,
                                                                List<Handler> handlersInList) {
         if (externalFilesRoute != null) {
-            ResourceHandler externalResourceHandler = new ResourceHandler();
-			Resource externalStaticResources = Resource.newResource(new File(externalFilesRoute));
-			externalResourceHandler.setBaseResource(externalStaticResources);
-			externalResourceHandler.setWelcomeFiles(new String[] {"index.html"});
-		
-			handlersInList.add(externalResourceHandler);
+          
+                ResourceHandler externalResourceHandler = new ResourceHandler();
+                Resource externalStaticResources = Resource.newResource(new File(externalFilesRoute));
+                externalResourceHandler.setBaseResource(externalStaticResources);
+                externalResourceHandler.setWelcomeFiles(new String[] {"index.html"});
+                handlersInList.add(externalResourceHandler);
+           
         }
     }
-
 
 }
