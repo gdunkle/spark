@@ -10,3 +10,5 @@ bin
 *.ipr
 *.iws
 reports
+pom.xml.releaseBackup
+release.properties
